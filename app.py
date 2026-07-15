@@ -25,99 +25,84 @@ counter = itertools.count()
 async def connect():
     global backend_ready
     backend_ready = True
-    print("[SocketIO] Conectado al backend")
+    print("[SocketIO] Conectado al backend de Okada")
 
 @sio.on("response", namespace="/test")
 async def on_response(msg):
     try:
         timestamp = msg[0]
         audio = msg[1]
-
         future = pending.pop(timestamp, None)
-
         if future:
             future.set_result(audio)
-
     except Exception as e:
         print("Error en respuesta SocketIO:", e)
 
 async def connect_backend():
     global backend_ready
-
     if backend_ready:
         return
-
     print("Conectando SocketIO...")
-
     await sio.connect(
         f"http://127.0.0.1:{BACKEND_PORT}",
         namespaces=["/test"]
     )
-
     print("SocketIO conectado:", sio.connected)
-    print("Namespaces:", sio.namespaces)
 
 # ============================================================
-# CONFIGURACIÓN (Limpia de /opt/ y comprobaciones de Python antiguas)
+# CONFIGURACIÓN (Rutas dinámicas basadas en código de Colab)
 # ============================================================
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 VOICE_CHANGER_DIR = os.path.join(APP_DIR, "voice-changer")
-# Apuntamos directamente a donde se extraiga tu launcher en dist/main
-SERVER_DIR = os.path.join(VOICE_CHANGER_DIR, "dist", "main") 
+SERVER_DIR = os.path.join(VOICE_CHANGER_DIR, "server")
 BACKEND_PORT = 8000
 BACKEND_URL = f"http://127.0.0.1:{BACKEND_PORT}"
 
-MODEL_PATH = os.path.join(APP_DIR, "pyra.pth")
-INDEX_PATH = os.path.join(APP_DIR, "pyra.index")
+# Rutas de tus modelos
+MODEL_PATH = os.path.join(APP_DIR, "modelos", "pyra", "pyra.pth")
+INDEX_PATH = os.path.join(APP_DIR, "modelos", "pyra", "pyra.index")
 SLOT_PYRA = 5  
 
 print("=" * 60)
-print("Pyra Bridge - HF Edition")
+print("Pyra Bridge - Colab Base Edition")
 print("=" * 60)
 
-# Comprobamos que exista la carpeta del launcher compilado
-if not os.path.isdir(SERVER_DIR):
-    raise RuntimeError(f"No existe la carpeta del launcher en: {SERVER_DIR}")
-
-# Determinamos la ruta del ejecutable compilado (el binario de Linux suele llamarse "main")
-LAUNCHER_EXE = os.path.join(SERVER_DIR, "main")
-if not os.path.isfile(LAUNCHER_EXE):
-    # Si no se llama "main", intentamos buscar un ejecutable sin extensión en esa carpeta
-    raise RuntimeError(f"No se encontró el ejecutable principal en {SERVER_DIR}")
-# =============================================================
-
-PRETRAIN = os.path.join(SERVER_DIR, "pretrain")
-
-print("========== PRETRAIN ==========")
-if os.path.exists(PRETRAIN):
-    for root, dirs, files in os.walk(PRETRAIN):
-        for f in files:
-            print(os.path.join(root, f))
-print("==============================")
+# Verificamos que el script de Okada exista
+SERVER_FILE = os.path.join(SERVER_DIR, "MMVCServerSIO.py")
+if not os.path.isfile(SERVER_FILE):
+    raise RuntimeError(f"No se encontró el script de Okada en {SERVER_FILE}")
 
 # ============================================================
-# ARRANCAR BACKEND (Ejecutando el binario compilado directo)
+# INICIAR BACKEND (Usa exactamente los mismos argumentos del Colab)
 # ============================================================
-# Le damos permisos de ejecución al binario por si acaso
-os.chmod(LAUNCHER_EXE, 0o755)
-
 command = [
-    LAUNCHER_EXE,
+    "python3", "MMVCServerSIO.py",
     "-p", str(BACKEND_PORT),
-    "--host", "127.0.0.1",
-    "--https", "False"
+    "--https", "False",
+    "--content_vec_500", "pretrain/checkpoint_best_legacy_500.pt",
+    "--content_vec_500_onnx", "pretrain/content_vec_500.onnx",
+    "--content_vec_500_onnx_on", "true",
+    "--hubert_base", "pretrain/hubert_base.pt",
+    "--hubert_base_jp", "pretrain/rinna_hubert_base_jp.pt",
+    "--hubert_soft", "pretrain/hubert/hubert-soft-0d54a1f4.pt",
+    "--nsf_hifigan", "pretrain/nsf_hifigan/model",
+    "--crepe_onnx_full", "pretrain/crepe_onnx_full.onnx",
+    "--crepe_onnx_tiny", "pretrain/crepe_onnx_tiny.onnx",
+    "--rmvpe", "pretrain/rmvpe.pt",
+    "--model_dir", "model_dir",
+    "--samples", "samples.json"
 ]
 
 backend = subprocess.Popen(command, cwd=SERVER_DIR)
 
 # ============================================================
-# LIMPIEZA
+# GESTIÓN DE APAGADO
 # ============================================================
 def stop_backend():
     global backend
     if backend is None: return
     if backend.poll() is not None: return
-    print("\n[Cleanup] Cerrando backend...")
+    print("\n[Cleanup] Apagando servidor de Okada...")
     try:
         backend.terminate()
         backend.wait(timeout=5)
@@ -134,30 +119,31 @@ signal.signal(signal.SIGINT, shutdown_handler)
 signal.signal(signal.SIGTERM, shutdown_handler)
 
 # ============================================================
-# ESPERAR BACKEND
+# ESPERAR INICIO Y DESCARGAS DE OKADA
 # ============================================================
-print("\nEsperando backend (y descargas iniciales de Okada)...\n")
+# El primer arranque tardará un poco porque descargará los .pt y .onnx de pretrain
+print("\nEsperando que Okada inicie (y descargue los modelos pretrain en segundo plano)...\n")
 backend_ok = False
-for i in range(600):  
+for i in range(900):  # 15 minutos de límite por si las descargas van lento
     if backend.poll() is not None:
-        raise RuntimeError(f"El launcher compilado terminó prematuramente. ExitCode={backend.returncode}")
+        raise RuntimeError(f"El backend de Okada falló al iniciar. Código de salida={backend.returncode}")
     try:
         r = requests.get(BACKEND_URL, timeout=1)
         backend_ok = True
         break
     except Exception:
-        if i % 10 == 0:
-            print(f"[{i}s] Esperando a que el backend termine de descargar/iniciar...")
+        if i % 15 == 0:
+            print(f"[{i}s] Esperando servidor local (Okada está descargando dependencias)...")
         time.sleep(1)
 
 if not backend_ok:
     stop_backend()
-    raise RuntimeError("El backend nunca abrió el puerto 8000 tras 10 minutos.")
+    raise RuntimeError("El backend de Okada no levantó después de 15 minutos.")
 
-print("\nBackend iniciado correctamente.")
+print("\nBackend de Okada iniciado de forma exitosa en Linux.")
 
 # ============================================================
-# FASTAPI & ROUTING
+# FASTAPI & INYECCIÓN DEL MODELO PYRA
 # ============================================================
 app = FastAPI()
 
@@ -167,17 +153,14 @@ async def startup():
 
 http = requests.Session()
 
-# ============================================================
-# COPIAR Y CARGAR MODELO
-# ============================================================
+# Copiamos Pyra dentro de la carpeta upload_dir de Okada
 UPLOAD_DIR = os.path.join(SERVER_DIR, "upload_dir")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 shutil.copy2(MODEL_PATH, os.path.join(UPLOAD_DIR, "pyra.pth"))
 shutil.copy2(INDEX_PATH, os.path.join(UPLOAD_DIR, "pyra.index"))
 
 def cargar_pyra():
-    print("\n[Bridge RVC] Solicitando carga de Pyra en Slot 5...")
+    print("\n[Bridge RVC] Cargando modelo Pyra en el Slot 5...")
     params = {
         "voiceChangerType": "RVC",
         "slot": SLOT_PYRA,
@@ -209,37 +192,29 @@ def cargar_pyra():
             data={"slot": SLOT_PYRA, "isHalf": "false", "params": json.dumps(params)},
             timeout=30
         )
-        print(f"[Backend Okada] Carga completada. Status: {r.status_code}")
+        print(f"[Backend Okada] Inyección de modelo exitosa. Código: {r.status_code}")
     except Exception as e:
         print(f"❌ Error al inyectar modelo: {e}")
 
-print("Esperando 60 segundos antes de cargar Pyra...")
-time.sleep(60)
+# Pausa para que se estabilice el servidor de Okada antes de inyectar el slot
+print("Esperando 20 segundos antes de inyectar Pyra...")
+time.sleep(20)
 cargar_pyra()
 
 # ============================================================
-# ENDPOINTS DE INFERENCIA & INTERFAZ
+# ENDPOINT DE AUDIO E INTERFAZ WEB
 # ============================================================
-VC_ENDPOINTS = ["/rest/vc", "/rest/vc_stream", "/rest/receive", "/infer", "/api/v1/infer"]
-
-import traceback
 @app.post("/api/stream_bridge")
 async def stream_bridge(request: Request):
     try:
         form = await request.form()
-
         wav = await form["audio"].read()
-
         pcm = np.frombuffer(wav[44:], dtype=np.int16)
-
         timestamp = next(counter)
 
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-
         pending[timestamp] = future
-
-        print("Enviando SocketIO...")
 
         await sio.emit(
             "request_message",
@@ -247,29 +222,17 @@ async def stream_bridge(request: Request):
             namespace="/test"
         )
 
-        print("Esperando respuesta...")
-
         audio = await asyncio.wait_for(future, timeout=5)
-
-        print("Respuesta recibida:", len(audio))
-
-        return Response(
-            content=audio,
-            media_type="application/octet-stream"
-        )
-
+        return Response(content=audio, media_type="application/octet-stream")
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return Response(str(e), status_code=500)
 
-# LA RUTA RAÍZ QUE SALVA EL SPACE DE HF Y GESTIONA EL AUDIO EN TIEMPO REAL
 HTML_CONTENT = """
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>RVC Live Voice Changer Studio - Pyra Edition</title>
+    <title>RVC Live Voice Changer - Pyra Colab Edition</title>
     <style>
         body { font-family: system-ui, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
         .container { background: #1e293b; padding: 2.5rem; border-radius: 16px; width: 100%; max-width: 500px; text-align: center; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }
@@ -290,7 +253,7 @@ HTML_CONTENT = """
 <body>
     <div class="container">
         <h1>🔥 RVC Voice Changer</h1>
-        <div class="subtitle">Pyra Bridge — Slot 5</div>
+        <div class="subtitle">Pyra Bridge (Basado en Colab Linux)</div>
 
         <div class="slider-container">
             <div class="slider-header">
@@ -318,7 +281,6 @@ HTML_CONTENT = """
         let audioContext;
         let mediaStream;
         let processor;
-        let activeOutput;
         let processing = false;
 
         function bufferToWav(buffer) {
@@ -358,10 +320,8 @@ HTML_CONTENT = """
             const statusLabel = document.getElementById('status');
             try {
                 mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-                
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
                 const source = audioContext.createMediaStreamSource(mediaStream);
-                
                 processor = audioContext.createScriptProcessor(256, 1, 1);
 
                 document.getElementById('btn_start').style.display = 'none';
@@ -370,14 +330,9 @@ HTML_CONTENT = """
                 statusLabel.style.color = "#10b981";
 
                 processor.onaudioprocess = async function(e) {
+                    if (processing) return;
+                    processing = true;
 
-    if (processing) {
-        return;
-    }
-
-    processing = true;
-
-    console.log("🎤 Nuevo chunk");
                     const inputData = e.inputBuffer.getChannelData(0);
                     const wavBlob = bufferToWav(inputData);
 
@@ -392,38 +347,23 @@ HTML_CONTENT = """
                             body: formData
                         });
 
-console.log("✅ Backend respondió");
                         if (response.ok && response.status === 200) {
                             const audioBlob = await response.blob();
                             const audioUrl = URL.createObjectURL(audioBlob);
-                            
                             const chunkAudio = new Audio(audioUrl);
                             chunkAudio.play().catch(() => {});
-                        } else {
-                            console.error("Fallo en inferencia backend:", response.status);
                         }
                     } catch (err) {
-
-    console.error("🔥 Error:", err);
-
-} finally {
-
-    processing = false;
-
-}
+                        console.error("Fallo de transmisión:", err);
+                    } finally {
+                        processing = false;
+                    }
                 };
 
                 source.connect(processor);
                 processor.connect(audioContext.destination);
 
             } catch (error) {
-
-    console.error("========== ERROR ==========");
-    console.error(error);
-    console.error("Nombre:", error.name);
-    console.error("Mensaje:", error.message);
-    console.error("===========================");
-
                 statusLabel.innerText = "❌ ERROR: PERMISO DENEGADO";
                 statusLabel.style.color = "#ef4444";
             }
@@ -450,9 +390,6 @@ console.log("✅ Backend respondió");
 async def get_ui():
     return HTML_CONTENT
 
-# ============================================================
-# RUN
-# ============================================================
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=7860)
