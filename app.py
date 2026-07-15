@@ -60,8 +60,9 @@ async def connect_backend():
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
-APP_DIR = "/app"
-VOICE_CHANGER_DIR = "/opt/voice-changer"
+# Magia aplicada aquí: busca todo dinámicamente en su misma carpeta
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+VOICE_CHANGER_DIR = os.path.join(APP_DIR, "voice-changer")
 SERVER_DIR = os.path.join(VOICE_CHANGER_DIR, "server")
 BACKEND_PORT = 8000
 BACKEND_URL = f"http://127.0.0.1:{BACKEND_PORT}"
@@ -260,7 +261,6 @@ async def stream_bridge(request: Request):
         traceback.print_exc()
         return Response(str(e), status_code=500)
 
-# LA RUTA RAÍZ QUE SALVA EL SPACO DE HF
 # LA RUTA RAÍZ QUE SALVA EL SPACE DE HF Y GESTIONA EL AUDIO EN TIEMPO REAL
 HTML_CONTENT = """
 <!DOCTYPE html>
