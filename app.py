@@ -58,48 +58,51 @@ async def connect_backend():
     print("Namespaces:", sio.namespaces)
 
 # ============================================================
-# CONFIGURACIÓN
+# CONFIGURACIÓN (Limpia de /opt/ y comprobaciones de Python antiguas)
 # ============================================================
-# Magia aplicada aquí: busca todo dinámicamente en su misma carpeta
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 VOICE_CHANGER_DIR = os.path.join(APP_DIR, "voice-changer")
-SERVER_DIR = os.path.join(VOICE_CHANGER_DIR, "server")
+# Apuntamos directamente a donde se extraiga tu launcher en dist/main
+SERVER_DIR = os.path.join(VOICE_CHANGER_DIR, "dist", "main") 
 BACKEND_PORT = 8000
 BACKEND_URL = f"http://127.0.0.1:{BACKEND_PORT}"
 
 MODEL_PATH = os.path.join(APP_DIR, "pyra.pth")
 INDEX_PATH = os.path.join(APP_DIR, "pyra.index")
-SLOT_PYRA = 5  # Mantenemos el Slot 5 que w-okada digirió bien
+SLOT_PYRA = 5  
 
 print("=" * 60)
 print("Pyra Bridge - HF Edition")
 print("=" * 60)
 
+# Comprobamos que exista la carpeta del launcher compilado
 if not os.path.isdir(SERVER_DIR):
-    raise RuntimeError(f"No existe {SERVER_DIR}")
+    raise RuntimeError(f"No existe la carpeta del launcher en: {SERVER_DIR}")
 
-SERVER_FILE = os.path.join(SERVER_DIR, "MMVCServerSIO.py")
-if not os.path.isfile(SERVER_FILE):
-    raise RuntimeError("No existe MMVCServerSIO.py")
-#=============================================================
+# Determinamos la ruta del ejecutable compilado (el binario de Linux suele llamarse "main")
+LAUNCHER_EXE = os.path.join(SERVER_DIR, "main")
+if not os.path.isfile(LAUNCHER_EXE):
+    # Si no se llama "main", intentamos buscar un ejecutable sin extensión en esa carpeta
+    raise RuntimeError(f"No se encontró el ejecutable principal en {SERVER_DIR}")
+# =============================================================
 
 PRETRAIN = os.path.join(SERVER_DIR, "pretrain")
 
 print("========== PRETRAIN ==========")
-
 if os.path.exists(PRETRAIN):
     for root, dirs, files in os.walk(PRETRAIN):
         for f in files:
             print(os.path.join(root, f))
-
 print("==============================")
 
 # ============================================================
-# ARRANCAR BACKEND
+# ARRANCAR BACKEND (Ejecutando el binario compilado directo)
 # ============================================================
+# Le damos permisos de ejecución al binario por si acaso
+os.chmod(LAUNCHER_EXE, 0o755)
+
 command = [
-    "python3",
-    SERVER_FILE,
+    LAUNCHER_EXE,
     "-p", str(BACKEND_PORT),
     "--host", "127.0.0.1",
     "--https", "False"
@@ -131,19 +134,18 @@ signal.signal(signal.SIGINT, shutdown_handler)
 signal.signal(signal.SIGTERM, shutdown_handler)
 
 # ============================================================
-# ESPERAR BACKEND (Aumentado para dar tiempo a las descargas)
+# ESPERAR BACKEND
 # ============================================================
 print("\nEsperando backend (y descargas iniciales de Okada)...\n")
 backend_ok = False
-for i in range(600):  # 600 segundos = 10 minutos max por si la red de HF está lenta
+for i in range(600):  
     if backend.poll() is not None:
-        raise RuntimeError(f"MMVCServerSIO terminó prematuramente. ExitCode={backend.returncode}")
+        raise RuntimeError(f"El launcher compilado terminó prematuramente. ExitCode={backend.returncode}")
     try:
         r = requests.get(BACKEND_URL, timeout=1)
         backend_ok = True
         break
     except Exception:
-        # Cada 10 segundos te avisará en qué segundo va
         if i % 10 == 0:
             print(f"[{i}s] Esperando a que el backend termine de descargar/iniciar...")
         time.sleep(1)
@@ -319,7 +321,6 @@ HTML_CONTENT = """
         let activeOutput;
         let processing = false;
 
-        // Función auxiliar para empaquetar buffers crudos a formato WAV binario (PCM de 16 bits)
         function bufferToWav(buffer) {
             let length = buffer.length * 2;
             let bufferArr = new ArrayBuffer(44 + length);
@@ -356,13 +357,11 @@ HTML_CONTENT = """
         async function startLiveVoice() {
             const statusLabel = document.getElementById('status');
             try {
-                // Solicitar permisos de micrófono
                 mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
                 
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
                 const source = audioContext.createMediaStreamSource(mediaStream);
                 
-                // Procesar fragmentos pequeños de audio (256 muestras para balancear latencia/rendimiento)
                 processor = audioContext.createScriptProcessor(256, 1, 1);
 
                 document.getElementById('btn_start').style.display = 'none';
@@ -398,7 +397,6 @@ console.log("✅ Backend respondió");
                             const audioBlob = await response.blob();
                             const audioUrl = URL.createObjectURL(audioBlob);
                             
-                            // Reproducir inmediatamente el fragmento modificado por RVC
                             const chunkAudio = new Audio(audioUrl);
                             chunkAudio.play().catch(() => {});
                         } else {
