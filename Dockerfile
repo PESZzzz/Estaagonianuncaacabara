@@ -18,11 +18,12 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # ===========================
-# Descargar w-okada estable
+# Github
 # ===========================
-RUN git clone https://github.com/w-okada/voice-changer.git /opt/voice-changer && \
-    cd /opt/voice-changer && \
-    git checkout v.1.5.3.18a
+RUN git clone \
+    -b w-okada \
+    https://github.com/PESZzzz/Estaagonianuncaacabara.git \
+    /opt/voice-changer
 
 # ===========================
 # Instalar dependencias oficiales
@@ -56,10 +57,6 @@ RUN pip install --no-cache-dir \
 RUN python3 -c "import onnxruntime; print(onnxruntime.__version__)"
 
 COPY MMVC_Namespace.py /opt/voice-changer/server/sio/MMVC_Namespace.py
-
-WORKDIR /app
-
-COPY . .
 
 EXPOSE 7860
 
